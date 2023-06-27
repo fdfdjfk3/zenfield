@@ -63,7 +63,8 @@ pub fn main() !void {
     defer sdl2.SDL_DestroyWindow(window);
     defer sdl2.SDL_DestroyRenderer(renderer);
 
-    _ = sdl2.SDL_SetHint(sdl2.SDL_HINT_RENDER_SCALE_QUALITY, 0);
+    _ = sdl2.SDL_SetHint(sdl2.SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    _ = sdl2.SDL_SetHint(sdl2.SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
 
     const bmpfilestream: ?*sdl2.SDL_RWops = sdl2.SDL_RWFromConstMem(window_icon, window_icon.len);
     const icon: ?*sdl2.SDL_Surface = sdl2.SDL_LoadBMP_RW(bmpfilestream, 1);
@@ -73,7 +74,7 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 9, 9, 10);
+    var board: brd.Board = brd.Board.create(allocator, 30, 16, 99);
     //board.openTile(0, 0);
     //board.openTile(10, 15);
     //board.openTile(20, 0);
@@ -121,12 +122,22 @@ pub fn main() !void {
                     switch (event.key.keysym.sym) {
                         sdl2.SDLK_a => {
                             sdl2.SDL_Log("a\n");
-                            game_renderer.camera_offset.x -= 5;
+                            game_renderer.camera_offset.x -= 8;
                             board.ready_for_redraw = true;
                             continue;
                         },
                         sdl2.SDLK_d => {
-                            game_renderer.camera_offset.x += 5;
+                            game_renderer.camera_offset.x += 8;
+                            board.ready_for_redraw = true;
+                            continue;
+                        },
+                        sdl2.SDLK_w => {
+                            game_renderer.camera_offset.y -= 8;
+                            board.ready_for_redraw = true;
+                            continue;
+                        },
+                        sdl2.SDLK_s => {
+                            game_renderer.camera_offset.y += 8;
                             board.ready_for_redraw = true;
                             continue;
                         },
@@ -138,8 +149,11 @@ pub fn main() !void {
                         game_renderer.tile_scale += 0.1;
                         board.ready_for_redraw = true;
                     } else if (event.wheel.y < 0) {
-                        board.ready_for_redraw = true;
                         game_renderer.tile_scale -= 0.1;
+                        if (game_renderer.tile_scale < 0.1) {
+                            game_renderer.tile_scale = 0.1;
+                        }
+                        board.ready_for_redraw = true;
                     }
                     continue;
                 },

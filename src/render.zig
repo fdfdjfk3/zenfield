@@ -66,8 +66,8 @@ pub const GameRenderer = struct {
         var h: i32 = undefined;
         sdl2.SDL_GetWindowSize(window, &w, &h);
         const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
-        const leftx: i32 = @divFloor(w, 2) - (@intCast(i32, @divFloor(board.grid_width, 2)) * true_tilesize) - @floatToInt(i32, self.camera_offset.x * self.tile_scale);
-        const topy: i32 = @divFloor(h, 2) - (@intCast(i32, @divFloor(board.grid_height, 2)) * true_tilesize) - @floatToInt(i32, self.camera_offset.y * self.tile_scale);
+        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
 
         const tiles_from_top = @divFloor((y - topy), true_tilesize);
         const tiles_from_left = @divFloor((x - leftx), true_tilesize);
@@ -99,10 +99,15 @@ pub const GameRenderer = struct {
 
     /// this function doesn't draw to the default renderer, but instead draws to the buffer passed in. this is for flexibility purposes.
     pub fn drawBoard(self: *GameRenderer, board: *brd.Board, buffer: *sdl2.SDL_Texture) void {
-        if (self.tileset == null) @panic("can't draw the board: tilset is not initialized\n");
-
-        // we are drawing the board, so it shouldn't be redrawn until it's modified again
+        // i am drawing the board, so it shouldn't be redrawn until it's modified again
         board.ready_for_redraw = false;
+
+        // no need to render that.
+        if (self.tile_scale < 0.1) {
+            std.debug.print("too small, {any}\n", .{self.tile_scale});
+            return;
+        }
+        std.debug.assert(self.tileset != null);
 
         const tileset = &self.tileset.?;
 
@@ -117,24 +122,37 @@ pub const GameRenderer = struct {
         const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
 
         // the leftmost x and leftmost y positions. may be offscreen, so they are i32.
-        const leftx: i32 = @divFloor(w, 2) - (@intCast(i32, @divFloor(board.grid_width, 2)) * true_tilesize) - @floatToInt(i32, self.camera_offset.x * self.tile_scale);
-        const topy: i32 = @divFloor(h, 2) - (@intCast(i32, @divFloor(board.grid_height, 2)) * true_tilesize) - @floatToInt(i32, self.camera_offset.y * self.tile_scale);
+        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
 
-        _ = block: {
-            const upper_bound = if (topy >= 0) 0 else @divFloor(-topy, true_tilesize);
-            std.debug.assert(upper_bound >= 0);
-            break :block .{ @intCast(u32, upper_bound), @intCast(u32, @divFloor(h, true_tilesize) + upper_bound) };
+        // this whole "hbound" and "wbound" part is just for calculating what cells actually need to be rendered
+        const bottomy: i32 = topy + (true_tilesize * @intCast(i32, board.grid_height)) + true_tilesize;
+        const rightx: i32 = leftx + (true_tilesize * @intCast(i32, board.grid_width)) + true_tilesize;
+        const hbound = block: {
+            const abs_topy = if (topy >= 0) 0 else -topy;
+            const start = if (topy >= h) return else @intCast(u32, @divFloor(abs_topy, true_tilesize));
+            const end = @intCast(u32, if (bottomy < 0) return else @min(@intCast(u32, @divFloor(abs_topy + h, true_tilesize) + 1), board.grid_height));
+            break :block .{ start, end };
+        };
+        const wbound = block: {
+            const abs_leftx = if (leftx >= 0) 0 else -leftx;
+            const start = if (leftx >= w) return else @intCast(u32, @divFloor(abs_leftx, true_tilesize));
+            const end = @intCast(u32, if (rightx < 0) return else @min(@intCast(u32, @divFloor(abs_leftx + w, true_tilesize) + 1), board.grid_width));
+
+            break :block .{ start, end };
         };
 
-        for (board.grid[0..board.grid_height]) |row, y| {
-            for (row[0..board.grid_width]) |tile, x| {
-                // const y = slice_y + hbound[0];
+        std.debug.print("tiles being rendered: {}\n", .{(hbound[1] - hbound[0]) * (wbound[1] - wbound[0])});
+        std.debug.print("y going from {}..{}, x going from {}..{}\n", .{ hbound[0], hbound[1], wbound[0], wbound[1] });
+
+        // render loop
+        for (board.grid[hbound[0]..hbound[1]]) |row, slice_y| {
+            for (row[wbound[0]..wbound[1]]) |tile, slice_x| {
+                const y = slice_y + hbound[0];
+                const x = slice_x + wbound[0];
 
                 const true_x = @intCast(c_int, leftx + (@intCast(i32, x) * true_tilesize));
                 const true_y = @intCast(c_int, topy + (@intCast(i32, y) * true_tilesize));
-
-                // if the tile is in a spot that is not visible, skip so not as much needs to be rendered
-                if (true_x + true_tilesize < 0 or true_x > leftx + (@intCast(i32, board.grid_width) * true_tilesize) or true_y + true_tilesize < 0 or true_y > topy + (@intCast(i32, board.grid_height) * true_tilesize)) continue;
 
                 const render_rect: sdl2.SDL_Rect = .{ .x = true_x, .y = true_y, .w = true_tilesize, .h = true_tilesize };
                 switch (tile) {

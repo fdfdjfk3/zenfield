@@ -100,7 +100,6 @@ pub const Board = struct {
             }
         }
     }
-    // TODO: make function not recursive so i can have like 1000x1000 boards
     pub fn openTile(self: *Board, i_x: u32, i_y: u32) !void {
         if (self.state == .lose) return;
         try self.open_tile_list.append(.{ i_x, i_y });
