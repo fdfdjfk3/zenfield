@@ -1,6 +1,7 @@
 const std = @import("std");
 const brd = @import("board.zig");
 const gui = @import("render.zig");
+const input = @import("input.zig");
 
 const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
@@ -74,7 +75,7 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 30, 16, 99);
+    var board: brd.Board = brd.Board.create(allocator, 16, 16, 40);
     //board.openTile(0, 0);
     //board.openTile(10, 15);
     //board.openTile(20, 0);
@@ -94,6 +95,10 @@ pub fn main() !void {
         sdl2.SDL_Log("failed to create screen buffer. error: %s\n", sdl2.SDL_GetError());
         return;
     };
+
+    var mouse_x: c_int = 0;
+    var mouse_y: c_int = 0;
+
     const screen_rect: sdl2.SDL_Rect = .{ .x = 0, .y = 0, .w = displaymode.w, .h = displaymode.h };
     game: while (true) {
         var event: sdl2.SDL_Event = undefined;
@@ -106,6 +111,8 @@ pub fn main() !void {
                     var y: c_int = undefined;
                     _ = sdl2.SDL_GetMouseState(&x, &y);
                     sdl2.SDL_Log("mouse moved, it's now at: %d, %d", x, y);
+                    mouse_x = x;
+                    mouse_y = y;
                     continue;
                 },
                 // re-render in case something happened to window
@@ -141,6 +148,13 @@ pub fn main() !void {
                             board.ready_for_redraw = true;
                             continue;
                         },
+                        sdl2.SDLK_SPACE => {
+                            sdl2.SDL_Log("space pressed\n");
+                            const xy = game_renderer.getTileXYOfScreenXY(&board, mouse_x, mouse_y) catch continue;
+                            std.debug.print("{any}\n", .{xy});
+                            try board.chordOpenTile(xy[0], xy[1]);
+                        },
+
                         else => continue,
                     }
                 },

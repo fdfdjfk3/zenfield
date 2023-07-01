@@ -19,6 +19,15 @@ const Tile = union(enum) {
             self.uncleared.mines_adjacent += 1;
         }
     }
+
+    pub fn isFlagged(self: *Tile) bool {
+        if (self.* == .uncleared) {
+            return self.uncleared.is_flagged;
+        } else if (self.* == .mine) {
+            return self.mine.is_flagged;
+        }
+        return false;
+    }
 };
 
 pub const Board = struct {
@@ -98,6 +107,38 @@ pub const Board = struct {
                 .mine => continue,
                 else => @panic("this shouldn't be reached. attempted to place mines on board but there were open spots, which shouldn't exist\n"),
             }
+        }
+    }
+    pub fn chordOpenTile(self: *Board, orig_x: u32, orig_y: u32) !void {
+        if (orig_x >= self.grid_width or orig_y >= self.grid_height) return;
+        if (self.grid[orig_y][orig_x] != .cleared) return;
+
+        var surrounding_flags: u32 = 0;
+        const top: bool = (orig_y > 0);
+        const bottom: bool = (orig_y < self.grid_height - 1);
+        const left: bool = (orig_x > 0);
+        const right: bool = (orig_x < self.grid_width - 1);
+
+        if (left and top and self.grid[orig_y - 1][orig_x - 1].isFlagged()) surrounding_flags += 1;
+        if (left and self.grid[orig_y][orig_x - 1].isFlagged()) surrounding_flags += 1;
+        if (left and bottom and self.grid[orig_y + 1][orig_x - 1].isFlagged()) surrounding_flags += 1;
+        if (top and self.grid[orig_y - 1][orig_x].isFlagged()) surrounding_flags += 1;
+        if (bottom and self.grid[orig_y + 1][orig_x].isFlagged()) surrounding_flags += 1;
+        if (right and top and self.grid[orig_y - 1][orig_x + 1].isFlagged()) surrounding_flags += 1;
+        if (right and self.grid[orig_y][orig_x + 1].isFlagged()) surrounding_flags += 1;
+        if (right and bottom and self.grid[orig_y + 1][orig_x + 1].isFlagged()) surrounding_flags += 1;
+
+        std.debug.print("surrounding: {}\n", .{surrounding_flags});
+
+        if (surrounding_flags == self.grid[orig_y][orig_x].cleared.mines_adjacent) {
+            if (left and top) try self.openTile(orig_x - 1, orig_y - 1);
+            if (left) try self.openTile(orig_x - 1, orig_y);
+            if (left and bottom) try self.openTile(orig_x - 1, orig_y + 1);
+            if (top) try self.openTile(orig_x, orig_y - 1);
+            if (bottom) try self.openTile(orig_x, orig_y + 1);
+            if (right and top) try self.openTile(orig_x + 1, orig_y - 1);
+            if (right) try self.openTile(orig_x + 1, orig_y);
+            if (right and bottom) try self.openTile(orig_x + 1, orig_y + 1);
         }
     }
     pub fn openTile(self: *Board, i_x: u32, i_y: u32) !void {

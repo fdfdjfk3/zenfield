@@ -66,8 +66,10 @@ pub const GameRenderer = struct {
         var h: i32 = undefined;
         sdl2.SDL_GetWindowSize(window, &w, &h);
         const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
-        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
-        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
+        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) *
+            @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) *
+            @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
 
         const tiles_from_top = @divFloor((y - topy), true_tilesize);
         const tiles_from_left = @divFloor((x - leftx), true_tilesize);
@@ -122,23 +124,28 @@ pub const GameRenderer = struct {
         const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
 
         // the leftmost x and leftmost y positions. may be offscreen, so they are i32.
-        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
-        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) * @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
+        const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) *
+            @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+        const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) *
+            @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
 
         // this whole "hbound" and "wbound" part is just for calculating what cells actually need to be rendered
         const bottomy: i32 = topy + (true_tilesize * @intCast(i32, board.grid_height)) + true_tilesize;
         const rightx: i32 = leftx + (true_tilesize * @intCast(i32, board.grid_width)) + true_tilesize;
+
+        // nothing needs to be rendered in this case.
+        if (topy >= h or bottomy < 0 or leftx >= w or rightx < 0) return;
+
         const hbound = block: {
             const abs_topy = if (topy >= 0) 0 else -topy;
-            const start = if (topy >= h) return else @intCast(u32, @divFloor(abs_topy, true_tilesize));
-            const end = @intCast(u32, if (bottomy < 0) return else @min(@intCast(u32, @divFloor(abs_topy + h, true_tilesize) + 1), board.grid_height));
+            const start = @intCast(u32, @divFloor(abs_topy, true_tilesize));
+            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_topy + h, true_tilesize) + 1), board.grid_height));
             break :block .{ start, end };
         };
         const wbound = block: {
             const abs_leftx = if (leftx >= 0) 0 else -leftx;
-            const start = if (leftx >= w) return else @intCast(u32, @divFloor(abs_leftx, true_tilesize));
-            const end = @intCast(u32, if (rightx < 0) return else @min(@intCast(u32, @divFloor(abs_leftx + w, true_tilesize) + 1), board.grid_width));
-
+            const start = @intCast(u32, @divFloor(abs_leftx, true_tilesize));
+            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_leftx + w, true_tilesize) + 1), board.grid_width));
             break :block .{ start, end };
         };
 
