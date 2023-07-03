@@ -3,7 +3,6 @@ const brd = @import("board.zig");
 
 const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
-
     @cInclude("SDL2/SDL_image.h");
 });
 
@@ -100,17 +99,18 @@ pub const GameRenderer = struct {
     }
 
     /// this function doesn't draw to the default renderer, but instead draws to the buffer passed in. this is for flexibility purposes.
+    /// TODO: remove all un-needed float to int conversions so precision is not lost as frequently.
+    /// this will help the jittering issue when zooming in and out.
     pub fn drawBoard(self: *GameRenderer, board: *brd.Board, buffer: *sdl2.SDL_Texture) void {
         // i am drawing the board, so it shouldn't be redrawn until it's modified again
         board.ready_for_redraw = false;
 
         // no need to render that.
-        if (self.tile_scale < 0.1) {
-            std.debug.print("too small, {any}\n", .{self.tile_scale});
+        if (self.tile_scale < 0.01) {
             return;
         }
-        std.debug.assert(self.tileset != null);
 
+        std.debug.assert(self.tileset != null);
         const tileset = &self.tileset.?;
 
         _ = sdl2.SDL_SetRenderTarget(self.sdl_renderer, buffer);
@@ -134,7 +134,10 @@ pub const GameRenderer = struct {
         const rightx: i32 = leftx + (true_tilesize * @intCast(i32, board.grid_width)) + true_tilesize;
 
         // nothing needs to be rendered in this case.
-        if (topy >= h or bottomy < 0 or leftx >= w or rightx < 0) return;
+        if (topy >= h or bottomy < 0 or leftx >= w or rightx < 0) {
+            _ = sdl2.SDL_SetRenderTarget(self.sdl_renderer, null);
+            return;
+        }
 
         const hbound = block: {
             const abs_topy = if (topy >= 0) 0 else -topy;
@@ -148,9 +151,6 @@ pub const GameRenderer = struct {
             const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_leftx + w, true_tilesize) + 1), board.grid_width));
             break :block .{ start, end };
         };
-
-        std.debug.print("tiles being rendered: {}\n", .{(hbound[1] - hbound[0]) * (wbound[1] - wbound[0])});
-        std.debug.print("y going from {}..{}, x going from {}..{}\n", .{ hbound[0], hbound[1], wbound[0], wbound[1] });
 
         // render loop
         for (board.grid[hbound[0]..hbound[1]]) |row, slice_y| {

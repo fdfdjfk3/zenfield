@@ -75,7 +75,7 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 16, 16, 40);
+    var board: brd.Board = brd.Board.create(allocator, 255, 255, 10000);
     //board.openTile(0, 0);
     //board.openTile(10, 15);
     //board.openTile(20, 0);
@@ -85,7 +85,8 @@ pub fn main() !void {
 
     var game_renderer = gui.GameRenderer.create(renderer);
     game_renderer.loadDefaultTileset();
-    std.debug.print("{any}\n", .{game_renderer});
+
+    var inputs = input.InputTracker{};
 
     _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     _ = sdl2.SDL_RenderClear(renderer);
@@ -96,97 +97,49 @@ pub fn main() !void {
         return;
     };
 
-    var mouse_x: c_int = 0;
-    var mouse_y: c_int = 0;
-
     const screen_rect: sdl2.SDL_Rect = .{ .x = 0, .y = 0, .w = displaymode.w, .h = displaymode.h };
+
     game: while (true) {
-        var event: sdl2.SDL_Event = undefined;
-
-        if (sdl2.SDL_PollEvent(&event) == 1) {
-            switch (event.type) {
-                sdl2.SDL_QUIT => break :game,
-                sdl2.SDL_MOUSEMOTION => {
-                    var x: c_int = undefined;
-                    var y: c_int = undefined;
-                    _ = sdl2.SDL_GetMouseState(&x, &y);
-                    sdl2.SDL_Log("mouse moved, it's now at: %d, %d", x, y);
-                    mouse_x = x;
-                    mouse_y = y;
-                    continue;
-                },
-                // re-render in case something happened to window
-                sdl2.SDL_WINDOWEVENT => {
-                    if (event.window.event == sdl2.SDL_WINDOWEVENT_RESIZED) {
-                        board.ready_for_redraw = true;
-                        continue;
-                    }
-                    _ = sdl2.SDL_RenderCopy(renderer, screen_buffer, null, &screen_rect);
-                    _ = sdl2.SDL_RenderPresent(renderer);
-                    continue;
-                },
-                sdl2.SDL_KEYDOWN => {
-                    switch (event.key.keysym.sym) {
-                        sdl2.SDLK_a => {
-                            sdl2.SDL_Log("a\n");
-                            game_renderer.camera_offset.x -= 8;
-                            board.ready_for_redraw = true;
-                            continue;
+        inputs.updateState() catch @panic("error collecting input events\n");
+        for (inputs.event_queue.buffer[0..inputs.event_queue.len]) |event| {
+            switch (event) {
+                .quit => break :game,
+                .click => |details| {
+                    switch (details.button) {
+                        .left => {
+                            const tilexy = game_renderer.getTileXYOfScreenXY(&board, details.posx, details.posy) catch continue;
+                            const tile = board.tileAt(tilexy[0], tilexy[1]) catch continue;
+                            if (tile.* == .cleared) try board.chordOpenTile(tilexy[0], tilexy[1]);
+                            try board.openTile(tilexy[0], tilexy[1]);
                         },
-                        sdl2.SDLK_d => {
-                            game_renderer.camera_offset.x += 8;
-                            board.ready_for_redraw = true;
-                            continue;
+                        .right => {
+                            const tilexy = game_renderer.getTileXYOfScreenXY(&board, details.posx, details.posy) catch continue;
+                            board.toggleFlag(tilexy[0], tilexy[1]);
                         },
-                        sdl2.SDLK_w => {
-                            game_renderer.camera_offset.y -= 8;
-                            board.ready_for_redraw = true;
-                            continue;
-                        },
-                        sdl2.SDLK_s => {
-                            game_renderer.camera_offset.y += 8;
-                            board.ready_for_redraw = true;
-                            continue;
-                        },
-                        sdl2.SDLK_SPACE => {
-                            sdl2.SDL_Log("space pressed\n");
-                            const xy = game_renderer.getTileXYOfScreenXY(&board, mouse_x, mouse_y) catch continue;
-                            std.debug.print("{any}\n", .{xy});
-                            try board.chordOpenTile(xy[0], xy[1]);
-                        },
-
-                        else => continue,
-                    }
-                },
-                sdl2.SDL_MOUSEWHEEL => {
-                    if (event.wheel.y > 0) {
-                        game_renderer.tile_scale += 0.1;
-                        board.ready_for_redraw = true;
-                    } else if (event.wheel.y < 0) {
-                        game_renderer.tile_scale -= 0.1;
-                        if (game_renderer.tile_scale < 0.1) {
-                            game_renderer.tile_scale = 0.1;
-                        }
-                        board.ready_for_redraw = true;
                     }
                     continue;
                 },
-                sdl2.SDL_MOUSEBUTTONDOWN => {
-                    const button = event.button;
-                    if (button.button == sdl2.SDL_BUTTON_LEFT) {
-                        const xy = game_renderer.getTileXYOfScreenXY(&board, button.x, button.y) catch continue;
-                        board.openTile(xy[0], xy[1]) catch {
-                            @panic("opening tile failed\n");
-                        };
-                    } else if (button.button == sdl2.SDL_BUTTON_RIGHT) {
-                        const xy = game_renderer.getTileXYOfScreenXY(&board, button.x, button.y) catch continue;
-                        board.toggleFlag(xy[0], xy[1]);
-                    }
+                .drag => |details| {
+                    game_renderer.camera_offset.x += @intToFloat(f32, -details.vecx) / game_renderer.tile_scale;
+                    game_renderer.camera_offset.y += @intToFloat(f32, -details.vecy) / game_renderer.tile_scale;
+                    board.ready_for_redraw = true;
                     continue;
                 },
-                else => continue,
+                .window => {
+                    board.ready_for_redraw = true;
+                    continue;
+                },
+                .scroll => |y| {
+                    if (y < 0) {
+                        if (game_renderer.tile_scale > 0.1) game_renderer.tile_scale -= 0.1;
+                    } else {
+                        if (game_renderer.tile_scale < 5) game_renderer.tile_scale += 0.1;
+                    }
+                    board.ready_for_redraw = true;
+                },
             }
         }
+
         if (board.ready_for_redraw) {
             game_renderer.drawBoard(&board, screen_buffer);
             _ = sdl2.SDL_RenderCopy(renderer, screen_buffer, null, &screen_rect);

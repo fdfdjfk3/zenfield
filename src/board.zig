@@ -48,15 +48,11 @@ pub const Board = struct {
     allocator: std.mem.Allocator,
     open_tile_list: std.ArrayList(std.meta.Tuple(&[_]type{ u32, u32 })),
 
-    /// print board in text format
-    pub fn debugPrint(self: *Board) void {
-        for (self.grid[0..self.grid_height]) |row| {
-            for (row[0..self.grid_width]) |tile| {
-                std.debug.print("{any} | ", .{tile});
-            }
-            std.debug.print("\n", .{});
-        }
+    pub fn tileAt(self: *Board, x: u32, y: u32) !*Tile {
+        if (x >= self.grid_width or y >= self.grid_height) return error.outOfBounds;
+        return &self.grid[y][x];
     }
+
     /// creates an initial board object
     pub fn create(allocator: std.mem.Allocator, width: u32, height: u32, mines: u32) Board {
         var board = Board{
@@ -128,7 +124,7 @@ pub const Board = struct {
         if (right and self.grid[orig_y][orig_x + 1].isFlagged()) surrounding_flags += 1;
         if (right and bottom and self.grid[orig_y + 1][orig_x + 1].isFlagged()) surrounding_flags += 1;
 
-        std.debug.print("surrounding: {}\n", .{surrounding_flags});
+        //std.debug.print("surrounding: {}\n", .{surrounding_flags});
 
         if (surrounding_flags == self.grid[orig_y][orig_x].cleared.mines_adjacent) {
             if (left and top) try self.openTile(orig_x - 1, orig_y - 1);
@@ -179,7 +175,6 @@ pub const Board = struct {
                 .cleared => continue,
                 .mine => |info| {
                     if (info.is_flagged) continue;
-                    std.debug.print("0, 0 is a mine!\n", .{});
                     self.state = .lose;
                 },
             }
