@@ -75,7 +75,7 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 255, 255, 10000);
+    var board: brd.Board = brd.Board.create(allocator, 100, 100, 1500);
     //board.openTile(0, 0);
     //board.openTile(10, 15);
     //board.openTile(20, 0);
@@ -120,8 +120,9 @@ pub fn main() !void {
                     continue;
                 },
                 .drag => |details| {
-                    game_renderer.camera_offset.x += @intToFloat(f32, -details.vecx) / game_renderer.tile_scale;
-                    game_renderer.camera_offset.y += @intToFloat(f32, -details.vecy) / game_renderer.tile_scale;
+                    const scale: f32 = @intToFloat(f32, game_renderer.tilesize) / @intToFloat(f32, gui.default_tilesize);
+                    game_renderer.camera_offset.x += @intToFloat(f32, -details.vecx) / scale;
+                    game_renderer.camera_offset.y += @intToFloat(f32, -details.vecy) / scale;
                     board.ready_for_redraw = true;
                     continue;
                 },
@@ -131,9 +132,9 @@ pub fn main() !void {
                 },
                 .scroll => |y| {
                     if (y < 0) {
-                        if (game_renderer.tile_scale > 0.1) game_renderer.tile_scale -= 0.1;
+                        if (game_renderer.tilesize > 1) game_renderer.tilesize -= 1;
                     } else {
-                        if (game_renderer.tile_scale < 5) game_renderer.tile_scale += 0.1;
+                        if (game_renderer.tilesize < 100) game_renderer.tilesize += 1;
                     }
                     board.ready_for_redraw = true;
                 },

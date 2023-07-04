@@ -48,6 +48,7 @@ const Tileset = struct {
     },
 };
 
+pub const default_tilesize = 16;
 pub const GameRenderer = struct {
     sdl_renderer: *sdl2.SDL_Renderer,
     tileset: ?Tileset,
@@ -57,21 +58,21 @@ pub const GameRenderer = struct {
         x: f32,
         y: f32,
     },
-    tile_scale: f32,
+    tilesize: c_int = 16,
 
     pub fn getTileXYOfScreenXY(self: *GameRenderer, board: *brd.Board, x: i32, y: i32) !std.meta.Tuple(&[_]type{ u32, u32 }) {
         const window = sdl2.SDL_RenderGetWindow(self.sdl_renderer);
         var w: i32 = undefined;
         var h: i32 = undefined;
         sdl2.SDL_GetWindowSize(window, &w, &h);
-        const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
+        const scale: f32 = @intToFloat(f32, self.tilesize) / @intToFloat(f32, default_tilesize);
         const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) *
-            @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+            @intToFloat(f32, self.tilesize) + (self.camera_offset.x * scale));
         const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) *
-            @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
+            @intToFloat(f32, self.tilesize) + (self.camera_offset.y * scale));
 
-        const tiles_from_top = @divFloor((y - topy), true_tilesize);
-        const tiles_from_left = @divFloor((x - leftx), true_tilesize);
+        const tiles_from_top = @divFloor((y - topy), self.tilesize);
+        const tiles_from_left = @divFloor((x - leftx), self.tilesize);
 
         if (tiles_from_top < 0 or tiles_from_left < 0) return error.outOfBounds;
 
@@ -79,9 +80,10 @@ pub const GameRenderer = struct {
     }
 
     pub fn create(renderer: *sdl2.SDL_Renderer) GameRenderer {
-        return GameRenderer{ .sdl_renderer = renderer, .tileset = null, .camera_offset = .{ .x = 0.0, .y = 0.0 }, .tile_scale = 1.0 };
+        return GameRenderer{ .sdl_renderer = renderer, .tileset = null, .camera_offset = .{ .x = 0.0, .y = 0.0 }, .tilesize = default_tilesize };
     }
 
+    /// Loads the default tileset that will always be embedded in the file.
     pub fn loadDefaultTileset(self: *GameRenderer) void {
         if (self.tileset != null) {
             sdl2.SDL_DestroyTexture(self.tileset.?.texture);
@@ -90,10 +92,14 @@ pub const GameRenderer = struct {
         const stream: ?*sdl2.SDL_RWops = sdl2.SDL_RWFromConstMem(default_tileset, default_tileset.len);
         defer sdl2.SDL_FreeRW(stream);
 
-        const sprite_surf: *sdl2.SDL_Surface = sdl2.IMG_LoadPNG_RW(stream) orelse @panic("couldn't load default tileset. panicking.\n");
+        const sprite_surf: *sdl2.SDL_Surface = sdl2.IMG_LoadPNG_RW(stream) orelse
+            @panic("couldn't load default tileset. panicking.\n");
+
         defer sdl2.SDL_FreeSurface(sprite_surf);
 
-        const texture = sdl2.SDL_CreateTextureFromSurface(self.sdl_renderer, sprite_surf) orelse @panic("unable to turn tilesheet surface into texture. panicking.\n");
+        const texture = sdl2.SDL_CreateTextureFromSurface(self.sdl_renderer, sprite_surf) orelse
+            @panic("unable to turn tilesheet surface into texture. panicking.\n");
+
         const tilesize = 16;
         self.tileset = generate_tileset(texture, tilesize);
     }
@@ -106,7 +112,7 @@ pub const GameRenderer = struct {
         board.ready_for_redraw = false;
 
         // no need to render that.
-        if (self.tile_scale < 0.01) {
+        if (self.tilesize < 1) {
             return;
         }
 
@@ -121,17 +127,17 @@ pub const GameRenderer = struct {
         var h: i32 = undefined;
         sdl2.SDL_GetWindowSize(window, &w, &h);
 
-        const true_tilesize: i32 = @floatToInt(i32, 16 * self.tile_scale);
+        const scale: f32 = @intToFloat(f32, self.tilesize) / @intToFloat(f32, default_tilesize);
 
         // the leftmost x and leftmost y positions. may be offscreen, so they are i32.
         const leftx: i32 = @divFloor(w, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_width) / 2.0) *
-            @intToFloat(f32, true_tilesize) + (self.camera_offset.x * self.tile_scale));
+            @intToFloat(f32, self.tilesize) + (self.camera_offset.x * scale));
         const topy: i32 = @divFloor(h, 2) - @floatToInt(i32, (@intToFloat(f32, board.grid_height) / 2.0) *
-            @intToFloat(f32, true_tilesize) + (self.camera_offset.y * self.tile_scale));
+            @intToFloat(f32, self.tilesize) + (self.camera_offset.y * scale));
 
         // this whole "hbound" and "wbound" part is just for calculating what cells actually need to be rendered
-        const bottomy: i32 = topy + (true_tilesize * @intCast(i32, board.grid_height)) + true_tilesize;
-        const rightx: i32 = leftx + (true_tilesize * @intCast(i32, board.grid_width)) + true_tilesize;
+        const bottomy: i32 = topy + (self.tilesize * @intCast(i32, board.grid_height)) + self.tilesize;
+        const rightx: i32 = leftx + (self.tilesize * @intCast(i32, board.grid_width)) + self.tilesize;
 
         // nothing needs to be rendered in this case.
         if (topy >= h or bottomy < 0 or leftx >= w or rightx < 0) {
@@ -141,14 +147,14 @@ pub const GameRenderer = struct {
 
         const hbound = block: {
             const abs_topy = if (topy >= 0) 0 else -topy;
-            const start = @intCast(u32, @divFloor(abs_topy, true_tilesize));
-            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_topy + h, true_tilesize) + 1), board.grid_height));
+            const start = @intCast(u32, @divFloor(abs_topy, self.tilesize));
+            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_topy + h, self.tilesize) + 1), board.grid_height));
             break :block .{ start, end };
         };
         const wbound = block: {
             const abs_leftx = if (leftx >= 0) 0 else -leftx;
-            const start = @intCast(u32, @divFloor(abs_leftx, true_tilesize));
-            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_leftx + w, true_tilesize) + 1), board.grid_width));
+            const start = @intCast(u32, @divFloor(abs_leftx, self.tilesize));
+            const end = @intCast(u32, @min(@intCast(u32, @divFloor(abs_leftx + w, self.tilesize) + 1), board.grid_width));
             break :block .{ start, end };
         };
 
@@ -158,10 +164,10 @@ pub const GameRenderer = struct {
                 const y = slice_y + hbound[0];
                 const x = slice_x + wbound[0];
 
-                const true_x = @intCast(c_int, leftx + (@intCast(i32, x) * true_tilesize));
-                const true_y = @intCast(c_int, topy + (@intCast(i32, y) * true_tilesize));
+                const true_x = @intCast(c_int, leftx + (@intCast(i32, x) * self.tilesize));
+                const true_y = @intCast(c_int, topy + (@intCast(i32, y) * self.tilesize));
 
-                const render_rect: sdl2.SDL_Rect = .{ .x = true_x, .y = true_y, .w = true_tilesize, .h = true_tilesize };
+                const render_rect: sdl2.SDL_Rect = .{ .x = true_x, .y = true_y, .w = self.tilesize, .h = self.tilesize };
                 switch (tile) {
                     .uncleared => |info| {
                         var rect = tileset.rects.blank;
