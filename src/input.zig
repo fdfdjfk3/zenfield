@@ -6,9 +6,6 @@ const sdl2 = @cImport({
 
 const InputEvent = union(enum) {
     quit,
-    //keypress: struct {
-    //    key: sdl2.SDL_Keycode,
-    //},
     click: struct {
         button: enum {
             left,
@@ -29,8 +26,6 @@ const max_inputs: comptime_int = 64;
 pub const InputTracker = struct {
     event_queue: std.BoundedArray(InputEvent, max_inputs) = std.BoundedArray(InputEvent, max_inputs).init(0) catch @panic("couldn't init event queue\n"),
 
-    // 322 is the number of sdlk events from sdl2 (this is unused rn)
-    // keys: std.bit_set.IntegerBitSet(322) = std.bit_set.IntegerBitSet(322).initFull(),
     ctrl_down: bool = false,
 
     // two primary mouse buttons
@@ -90,7 +85,7 @@ pub const InputTracker = struct {
                         self.mouse_drag = true;
                     }
 
-                    if (self.mouse_drag or (self.mouse_drag and self.lastEventWasDrag())) {
+                    if (self.mouse_drag) {
                         // if the previous event was a drag event too, merge it with the last one
                         if (self.event_queue.len > 0 and self.lastEventWasDrag()) {
                             const arr_end = self.event_queue.len - 1;
@@ -118,6 +113,7 @@ pub const InputTracker = struct {
                     } else if (button.button == sdl2.SDL_BUTTON_RIGHT) {
                         self.mouse_r_down = true;
                     }
+
                     continue;
                 },
                 sdl2.SDL_MOUSEBUTTONUP => {

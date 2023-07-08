@@ -76,15 +76,13 @@ pub fn main() !void {
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
     var board: brd.Board = brd.Board.create(allocator, 100, 100, 1500);
-    //board.openTile(0, 0);
-    //board.openTile(10, 15);
-    //board.openTile(20, 0);
-    //board.openTile(4, 4);
-    //std.debug.print("{any}\n", .{board.grid[1][2]});
-    //board.debugPrint();
 
-    var game_renderer = gui.GameRenderer.create(renderer);
-    game_renderer.loadDefaultTileset();
+    // initialize render data thing
+    var board_render_config = gui.BoardRenderConfig.create(renderer);
+    board_render_config.loadDefaultTileset();
+
+    var ui_render_config = gui.UiRenderConfig.create(renderer);
+    ui_render_config.loadDefaultTextures();
 
     var inputs = input.InputTracker{};
 
@@ -92,7 +90,7 @@ pub fn main() !void {
     _ = sdl2.SDL_RenderClear(renderer);
     _ = sdl2.SDL_RenderPresent(renderer);
 
-    var screen_buffer: *sdl2.SDL_Texture = sdl2.SDL_CreateTexture(renderer, 0, sdl2.SDL_TEXTUREACCESS_TARGET, displaymode.w, displaymode.h) orelse {
+    var screen_buffer: *sdl2.SDL_Texture = sdl2.SDL_CreateTexture(renderer, sdl2.SDL_PIXELFORMAT_RGBA8888, sdl2.SDL_TEXTUREACCESS_TARGET, displaymode.w, displaymode.h) orelse {
         sdl2.SDL_Log("failed to create screen buffer. error: %s\n", sdl2.SDL_GetError());
         return;
     };
@@ -107,22 +105,22 @@ pub fn main() !void {
                 .click => |details| {
                     switch (details.button) {
                         .left => {
-                            const tilexy = game_renderer.getTileXYOfScreenXY(&board, details.posx, details.posy) catch continue;
+                            const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
                             const tile = board.tileAt(tilexy[0], tilexy[1]) catch continue;
                             if (tile.* == .cleared) try board.chordOpenTile(tilexy[0], tilexy[1]);
                             try board.openTile(tilexy[0], tilexy[1]);
                         },
                         .right => {
-                            const tilexy = game_renderer.getTileXYOfScreenXY(&board, details.posx, details.posy) catch continue;
+                            const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
                             board.toggleFlag(tilexy[0], tilexy[1]);
                         },
                     }
                     continue;
                 },
                 .drag => |details| {
-                    const scale: f32 = @intToFloat(f32, game_renderer.tilesize) / @intToFloat(f32, gui.default_tilesize);
-                    game_renderer.camera_offset.x += @intToFloat(f32, -details.vecx) / scale;
-                    game_renderer.camera_offset.y += @intToFloat(f32, -details.vecy) / scale;
+                    const scale: f32 = @intToFloat(f32, board_render_config.tilesize) / @intToFloat(f32, gui.default_tilesize);
+                    board_render_config.camera_offset.x += @intToFloat(f32, -details.vecx) / scale;
+                    board_render_config.camera_offset.y += @intToFloat(f32, -details.vecy) / scale;
                     board.ready_for_redraw = true;
                     continue;
                 },
@@ -132,9 +130,9 @@ pub fn main() !void {
                 },
                 .scroll => |y| {
                     if (y < 0) {
-                        if (game_renderer.tilesize > 1) game_renderer.tilesize -= 1;
+                        if (board_render_config.tilesize > 1) board_render_config.tilesize -= 1;
                     } else {
-                        if (game_renderer.tilesize < 100) game_renderer.tilesize += 1;
+                        if (board_render_config.tilesize < 100) board_render_config.tilesize += 1;
                     }
                     board.ready_for_redraw = true;
                 },
@@ -142,7 +140,10 @@ pub fn main() !void {
         }
 
         if (board.ready_for_redraw) {
-            game_renderer.drawBoard(&board, screen_buffer);
+            // render the board and then ui on top of it
+            board.ready_for_redraw = false;
+            gui.drawBoard(&board_render_config, &board, screen_buffer);
+            gui.drawUiComponents(&ui_render_config, &board, screen_buffer);
             _ = sdl2.SDL_RenderCopy(renderer, screen_buffer, null, &screen_rect);
             _ = sdl2.SDL_RenderPresent(renderer);
         }
