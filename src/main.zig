@@ -2,6 +2,7 @@ const std = @import("std");
 const brd = @import("board.zig");
 const gui = @import("render.zig");
 const input = @import("input.zig");
+const st = @import("state.zig");
 
 const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
@@ -75,7 +76,7 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 100, 100, 1500);
+    var board: brd.Board = brd.Board.create(allocator, 40, 20, 140);
 
     // initialize render data thing
     var board_render_config = gui.BoardRenderConfig.create(renderer);
@@ -85,6 +86,7 @@ pub fn main() !void {
     ui_render_config.loadDefaultTextures();
 
     var inputs = input.InputTracker{};
+    var state = st.State{};
 
     _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     _ = sdl2.SDL_RenderClear(renderer);
@@ -105,27 +107,43 @@ pub fn main() !void {
                 .click => |details| {
                     switch (details.button) {
                         .left => {
+                            if (ui_render_config.posIsOnUi(details.posx, details.posy)) {
+                                ui_render_config.clickButtonAtXY(details.posx, details.posy, &state);
+                                continue;
+                            }
+
                             const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
                             const tile = board.tileAt(tilexy[0], tilexy[1]) catch continue;
-                            if (tile.* == .cleared) try board.chordOpenTile(tilexy[0], tilexy[1]);
-                            try board.openTile(tilexy[0], tilexy[1]);
+
+                            const updated: bool = block: {
+                                if (tile.* == .cleared) {
+                                    break :block try board.chordOpenTile(tilexy[0], tilexy[1]);
+                                } else {
+                                    break :block try board.openTile(tilexy[0], tilexy[1]);
+                                }
+                            };
+
+                            if (updated) state.board_ready_for_redraw = true;
                         },
                         .right => {
                             const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
-                            board.toggleFlag(tilexy[0], tilexy[1]);
+                            const updated: bool = board.toggleFlag(tilexy[0], tilexy[1]);
+
+                            if (updated) state.board_ready_for_redraw = true;
                         },
                     }
                     continue;
                 },
                 .drag => |details| {
-                    const scale: f32 = @intToFloat(f32, board_render_config.tilesize) / @intToFloat(f32, gui.default_tilesize);
-                    board_render_config.camera_offset.x += @intToFloat(f32, -details.vecx) / scale;
-                    board_render_config.camera_offset.y += @intToFloat(f32, -details.vecy) / scale;
-                    board.ready_for_redraw = true;
+                    const scale: f32 = @as(f32, @floatFromInt(board_render_config.tilesize)) / @as(f32, @floatFromInt(gui.default_tilesize));
+                    board_render_config.camera_offset.x += @as(f32, @floatFromInt(-details.vecx)) / scale;
+                    board_render_config.camera_offset.y += @as(f32, @floatFromInt(-details.vecy)) / scale;
+
+                    state.board_ready_for_redraw = true;
                     continue;
                 },
                 .window => {
-                    board.ready_for_redraw = true;
+                    state.board_ready_for_redraw = true;
                     continue;
                 },
                 .scroll => |y| {
@@ -134,14 +152,22 @@ pub fn main() !void {
                     } else {
                         if (board_render_config.tilesize < 100) board_render_config.tilesize += 1;
                     }
-                    board.ready_for_redraw = true;
+                    state.board_ready_for_redraw = true;
                 },
             }
         }
 
-        if (board.ready_for_redraw) {
+        if (state.board_pending_restart) {
+            board.clear();
+            try board.setMines();
+
+            state.board_ready_for_redraw = true;
+            state.board_pending_restart = false;
+        }
+
+        if (state.board_ready_for_redraw) {
             // render the board and then ui on top of it
-            board.ready_for_redraw = false;
+            state.board_ready_for_redraw = false;
             gui.drawBoard(&board_render_config, &board, screen_buffer);
             gui.drawUiComponents(&ui_render_config, &board, screen_buffer);
             _ = sdl2.SDL_RenderCopy(renderer, screen_buffer, null, &screen_rect);

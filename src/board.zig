@@ -20,7 +20,7 @@ const Tile = union(enum) {
         }
     }
 
-    pub fn isFlagged(self: *Tile) bool {
+    pub fn isFlagged(self: *const Tile) bool {
         if (self.* == .uncleared) {
             return self.uncleared.is_flagged;
         } else if (self.* == .mine) {
@@ -41,9 +41,6 @@ pub const Board = struct {
         lose,
         win,
     },
-    // this is the only variable that i will be mutating in external functions, and even then, it will only
-    // be mutated in functions like render.GameRenderer.drawBoard();
-    ready_for_redraw: bool,
 
     allocator: std.mem.Allocator,
     open_tile_list: std.ArrayList(std.meta.Tuple(&[_]type{ u32, u32 })),
@@ -61,16 +58,27 @@ pub const Board = struct {
             .grid = [1][max_size]Tile{[1]Tile{.{ .uncleared = .{ .is_flagged = false, .mines_adjacent = 0 } }} ** max_size} ** max_size,
             .mines = @min(width * height, mines),
             .state = .in_progress,
-            // this is true to start so render.GameRender.drawBoard() draws the initial state of the board
-            .ready_for_redraw = true,
             .allocator = allocator,
             .open_tile_list = std.ArrayList(std.meta.Tuple(&[_]type{ u32, u32 })).initCapacity(allocator, 32) catch @panic("unable to initialize board open_tile_list\n"),
         };
         board.setMines() catch @panic("failed to set mines on board\n");
         return board;
     }
+
+    /// sets all tiles of the active board to Tile { .uncleared = .{ .is_flagged = false, .mines_adjacent = 0 } }
+    pub fn clear(self: *Board) void {
+        for (self.grid[0..self.grid_height]) |*row| {
+            for (row[0..self.grid_width]) |*tile| {
+                tile.* = Tile{ .uncleared = .{ .is_flagged = false, .mines_adjacent = 0 } };
+            }
+        }
+        self.state = .in_progress;
+    }
+
     /// places all the mines down randomly. this is only called by other functions in this object because if it's not called at the right time it can potentially cause an infinite loop (if there are no spaces to put a mine)
-    fn setMines(self: *Board) !void {
+    pub fn setMines(self: *Board) !void {
+        if (self.mines > self.grid_width * self.grid_height) return error.tooManyMines;
+
         var rand = std.rand.DefaultPrng.init(block: {
             var seed: u64 = undefined;
             try std.os.getrandom(std.mem.asBytes(&seed));
@@ -101,44 +109,46 @@ pub const Board = struct {
                     if (bottom and right) self.grid[y + 1][x + 1].incMinesAdjacent();
                 },
                 .mine => continue,
-                else => @panic("this shouldn't be reached. attempted to place mines on board but there were open spots, which shouldn't exist\n"),
+                else => unreachable,
             }
         }
     }
-    pub fn chordOpenTile(self: *Board, orig_x: u32, orig_y: u32) !void {
-        if (orig_x >= self.grid_width or orig_y >= self.grid_height) return;
-        if (self.grid[orig_y][orig_x] != .cleared) return;
+    pub fn chordOpenTile(self: *Board, orig_x: u32, orig_y: u32) !bool {
+        if (orig_x >= self.grid_width or orig_y >= self.grid_height) return false;
+        if (self.grid[orig_y][orig_x] != .cleared) return false;
 
         var surrounding_flags: u32 = 0;
-        const top: bool = (orig_y > 0);
-        const bottom: bool = (orig_y < self.grid_height - 1);
-        const left: bool = (orig_x > 0);
-        const right: bool = (orig_x < self.grid_width - 1);
+        var something_updated: bool = false;
 
-        if (left and top and self.grid[orig_y - 1][orig_x - 1].isFlagged()) surrounding_flags += 1;
-        if (left and self.grid[orig_y][orig_x - 1].isFlagged()) surrounding_flags += 1;
-        if (left and bottom and self.grid[orig_y + 1][orig_x - 1].isFlagged()) surrounding_flags += 1;
-        if (top and self.grid[orig_y - 1][orig_x].isFlagged()) surrounding_flags += 1;
-        if (bottom and self.grid[orig_y + 1][orig_x].isFlagged()) surrounding_flags += 1;
-        if (right and top and self.grid[orig_y - 1][orig_x + 1].isFlagged()) surrounding_flags += 1;
-        if (right and self.grid[orig_y][orig_x + 1].isFlagged()) surrounding_flags += 1;
-        if (right and bottom and self.grid[orig_y + 1][orig_x + 1].isFlagged()) surrounding_flags += 1;
+        const top: u32 = if (orig_y > 0) orig_y - 1 else orig_y;
+        const bottom: u32 = if (orig_y < self.grid_height - 1) orig_y + 1 else orig_y;
+        const left: u32 = if (orig_x > 0) orig_x - 1 else orig_x;
+        const right: u32 = if (orig_x < self.grid_width - 1) orig_x + 1 else orig_x;
 
-        //std.debug.print("surrounding: {}\n", .{surrounding_flags});
+        for (self.grid[top .. bottom + 1], 0..) |row, y| {
+            for (row[left .. right + 1], 0..) |tile, x| {
+                if (x + left == orig_x and y + top == orig_y) continue;
+
+                if (tile.isFlagged()) surrounding_flags += 1;
+            }
+        }
 
         if (surrounding_flags == self.grid[orig_y][orig_x].cleared.mines_adjacent) {
-            if (left and top) try self.openTile(orig_x - 1, orig_y - 1);
-            if (left) try self.openTile(orig_x - 1, orig_y);
-            if (left and bottom) try self.openTile(orig_x - 1, orig_y + 1);
-            if (top) try self.openTile(orig_x, orig_y - 1);
-            if (bottom) try self.openTile(orig_x, orig_y + 1);
-            if (right and top) try self.openTile(orig_x + 1, orig_y - 1);
-            if (right) try self.openTile(orig_x + 1, orig_y);
-            if (right and bottom) try self.openTile(orig_x + 1, orig_y + 1);
+            for (self.grid[top .. bottom + 1], 0..) |row, y| {
+                for (row[left .. right + 1], 0..) |_, x| {
+                    if (x + left == orig_x and y + top == orig_y) continue;
+
+                    const updated = try self.openTile(@as(u32, @intCast(x + left)), @as(u32, @intCast(y + top)));
+                    something_updated = something_updated or updated;
+                }
+            }
         }
+
+        return something_updated;
     }
-    pub fn openTile(self: *Board, i_x: u32, i_y: u32) !void {
-        if (self.state == .lose) return;
+
+    pub fn openTile(self: *Board, i_x: u32, i_y: u32) !bool {
+        if (self.state == .lose) return false;
         try self.open_tile_list.append(.{ i_x, i_y });
 
         while (self.open_tile_list.items.len > 0) {
@@ -179,19 +189,22 @@ pub const Board = struct {
                 },
             }
         }
-        self.ready_for_redraw = true;
+        return true;
     }
-    pub fn toggleFlag(self: *Board, x: u32, y: u32) void {
-        if (self.state == .lose) return;
-        if (x >= self.grid_width or y >= self.grid_height) return;
+
+    /// toggle a flag on the board. returns a boolean based on whether something on the board was changed
+    pub fn toggleFlag(self: *Board, x: u32, y: u32) bool {
+        if (self.state == .lose) return false;
+        if (x >= self.grid_width or y >= self.grid_height) return false;
 
         var tile: *Tile = &self.grid[y][x];
         if (tile.* == .uncleared) {
             tile.uncleared.is_flagged = !tile.uncleared.is_flagged;
-            self.ready_for_redraw = true;
+            return true;
         } else if (tile.* == .mine) {
             tile.mine.is_flagged = !tile.mine.is_flagged;
-            self.ready_for_redraw = true;
+            return true;
         }
+        return false;
     }
 };

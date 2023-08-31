@@ -81,7 +81,7 @@ pub const InputTracker = struct {
                         self.moved_since_lmb_down.y += temp_y;
                     }
 
-                    if (try std.math.absInt(self.moved_since_lmb_down.x) > 40 or try std.math.absInt(self.moved_since_lmb_down.y) > 40) {
+                    if (try std.math.absInt(self.moved_since_lmb_down.x) > 20 or try std.math.absInt(self.moved_since_lmb_down.y) > 20) {
                         self.mouse_drag = true;
                     }
 
