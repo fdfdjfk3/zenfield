@@ -1,55 +1,18 @@
 const std = @import("std");
 const brd = @import("board.zig");
 const State = @import("state.zig").State;
+const InputEvent = @import("input.zig").InputEvent;
+const TextureManager = @import("texturemanager.zig").TextureManager;
+const TextureID = @import("texturemanager.zig").TextureID;
 
 const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
     @cInclude("SDL2/SDL_image.h");
 });
 
-inline fn tilerect(tilesize: u16, x: u16, y: u16) sdl2.SDL_Rect {
-    return .{ .x = x, .y = y, .w = tilesize, .h = tilesize };
-}
-
-const Tileset = struct {
-    texture: *sdl2.SDL_Texture,
-    rects: struct {
-        nums: [9]sdl2.SDL_Rect,
-        uncleared: sdl2.SDL_Rect,
-        flag: sdl2.SDL_Rect,
-        mine: sdl2.SDL_Rect,
-        blank: sdl2.SDL_Rect,
-        unknown: sdl2.SDL_Rect, // fallback tile texture if none of the others apply (somehow)
-    },
-    pub fn from(texture: *sdl2.SDL_Texture, ts: u16) @This() {
-        return @This(){
-            .texture = texture,
-            .rects = .{
-                .nums = [9]sdl2.SDL_Rect{
-                    tilerect(ts, ts * 2, 0),
-                    tilerect(ts, 0, ts),
-                    tilerect(ts, ts, ts),
-                    tilerect(ts, ts * 2, ts),
-                    tilerect(ts, ts * 3, ts),
-                    tilerect(ts, 0, ts * 2),
-                    tilerect(ts, ts, ts * 2),
-                    tilerect(ts, ts * 2, ts * 2),
-                    tilerect(ts, ts * 3, ts * 2),
-                },
-                .uncleared = tilerect(ts, 0, 0),
-                .flag = tilerect(ts, ts, 0),
-                .mine = tilerect(ts, ts * 3, 0),
-                .blank = tilerect(ts, 0, 0),
-                .unknown = tilerect(ts, ts, ts * 3),
-            },
-        };
-    }
-};
-
 pub const default_tilesize = 16;
 pub const BoardRenderConfig = struct {
     sdl_renderer: *sdl2.SDL_Renderer,
-    active_tileset: ?Tileset,
 
     // board details
     camera_offset: struct {
@@ -59,35 +22,13 @@ pub const BoardRenderConfig = struct {
     tilesize: c_int = 16,
 
     pub fn create(renderer: *sdl2.SDL_Renderer) @This() {
-        return @This(){ .sdl_renderer = renderer, .active_tileset = null, .camera_offset = .{ .x = 0.0, .y = 0.0 }, .tilesize = default_tilesize };
-    }
-
-    /// Loads the default tileset that will always be embedded in the file.
-    pub fn loadDefaultTileset(self: *@This()) void {
-        const default_tileset = @embedFile("res/default/tileset.png");
-
-        if (self.active_tileset != null) {
-            sdl2.SDL_DestroyTexture(self.active_tileset.?.texture);
-        }
-        const stream: ?*sdl2.SDL_RWops = sdl2.SDL_RWFromConstMem(default_tileset, default_tileset.len);
-        defer sdl2.SDL_FreeRW(stream);
-
-        const sprite_surf: *sdl2.SDL_Surface = sdl2.IMG_LoadPNG_RW(stream) orelse
-            @panic("couldn't load default tileset. panicking.\n");
-
-        defer sdl2.SDL_FreeSurface(sprite_surf);
-
-        const texture = sdl2.SDL_CreateTextureFromSurface(self.sdl_renderer, sprite_surf) orelse
-            @panic("unable to turn tilesheet surface into texture. panicking.\n");
-
-        const tilesize = 16;
-        self.active_tileset = Tileset.from(texture, tilesize);
+        return @This(){ .sdl_renderer = renderer, .camera_offset = .{ .x = 0.0, .y = 0.0 }, .tilesize = default_tilesize };
     }
 };
 
 /// get the X, Y position of the board based on the X, Y position on the screen. takes in BoardRenderConfig to accurately make this calculation.
 /// returns an error if the X, Y is not on the board.
-pub fn getBoardTileXYOfScreenXY(brc: *BoardRenderConfig, board: *brd.Board, x: i32, y: i32) !std.meta.Tuple(&[_]type{ u32, u32 }) {
+pub fn getBoardTileXYOfScreenXY(brc: *BoardRenderConfig, board: *brd.Board, x: i32, y: i32) !struct { u32, u32 } {
     const window = sdl2.SDL_RenderGetWindow(brc.sdl_renderer);
     var w: i32 = undefined;
     var h: i32 = undefined;
@@ -107,9 +48,7 @@ pub fn getBoardTileXYOfScreenXY(brc: *BoardRenderConfig, board: *brd.Board, x: i
 }
 
 /// this function doesn't draw to the default renderer, but instead draws to the buffer passed in. this is for flexibility purposes.
-pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_Texture) void {
-    std.debug.assert(brc.active_tileset != null);
-
+pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_Texture, texture_manager: *TextureManager) void {
     // no need to render that.
     if (brc.tilesize < 1) {
         return;
@@ -154,8 +93,6 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
         break :block .{ start, end };
     };
 
-    const tileset = &brc.active_tileset.?;
-
     // render loop
     for (board.grid[hbound[0]..hbound[1]], 0..) |row, slice_y| {
         for (row[wbound[0]..wbound[1]], 0..) |tile, slice_x| {
@@ -168,22 +105,34 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
             const render_rect: sdl2.SDL_Rect = .{ .x = true_x, .y = true_y, .w = brc.tilesize, .h = brc.tilesize };
             switch (tile) {
                 .uncleared => |info| {
-                    var rect = tileset.rects.blank;
-                    if (info.is_flagged) rect = tileset.rects.flag;
+                    var texture = texture_manager.textures.get(.tile_uncleared);
+                    if (info.is_flagged) texture = texture_manager.textures.get(.tile_flagged);
 
-                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, tileset.texture, &rect, &render_rect);
+                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, texture, null, &render_rect);
                 },
                 .cleared => |info| {
                     const mines = info.mines_adjacent;
-                    if (mines > 8) @panic("somehow the number of mines of this tile was over 8. hmmm.\n");
-                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, tileset.texture, &tileset.rects.nums[mines], &render_rect);
+                    const texture = switch (mines) {
+                        0 => texture_manager.textures.get(.tile_0),
+                        1 => texture_manager.textures.get(.tile_1),
+                        2 => texture_manager.textures.get(.tile_2),
+                        3 => texture_manager.textures.get(.tile_3),
+                        4 => texture_manager.textures.get(.tile_4),
+                        5 => texture_manager.textures.get(.tile_5),
+                        6 => texture_manager.textures.get(.tile_6),
+                        7 => texture_manager.textures.get(.tile_7),
+                        8 => texture_manager.textures.get(.tile_8),
+                        else => @panic("somehow the number of mines of this tile was over 8. hmmm.\n"),
+                    };
+
+                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, texture, null, &render_rect);
                 },
                 .mine => |info| {
-                    var rect = tileset.rects.blank;
-                    if (info.is_flagged) rect = tileset.rects.flag;
-                    if (board.state == .lose and !info.is_flagged) rect = tileset.rects.mine;
+                    var texture = texture_manager.textures.get(.tile_uncleared);
+                    if (info.is_flagged) texture = texture_manager.textures.get(.tile_flagged);
+                    if (board.state == .lose and !info.is_flagged) texture = texture_manager.textures.get(.tile_mine);
 
-                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, tileset.texture, &rect, &render_rect);
+                    _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, texture, null, &render_rect);
                 },
             }
         }
@@ -195,155 +144,94 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
 // UI stuff beyond this point
 //---------------------------
 
-const Button = struct {
-    rect: sdl2.SDL_Rect,
-    is_active: bool,
+pub const MenuType = enum {
+    main_overlay,
+    options,
 };
 
-const UiTexture = enum {
-    restart_normal,
-    restart_normal_pressed,
-    restart_nervous,
-    restart_nervous_pressed,
-    restart_win,
-    restart_win_pressed,
-    restart_lose,
-    restart_lose_pressed,
-    settings,
-    settings_pressed,
-    settings_button,
-    settings_button_unchecked,
+pub const Element = union(enum) {
+    decoration: struct {
+        rect: sdl2.SDL_Rect,
+        texture: TextureID,
+    },
+    button: struct {
+        label: []const u8,
+        rect: sdl2.SDL_Rect,
+        texture: TextureID,
+        on_click: *const fn (*Element, *Interface, *State) bool,
+        on_step: ?*const fn (*Element, *Interface, *State, []InputEvent) bool,
+    },
 };
 
-pub const ButtonEvent = enum {
-    reset_board,
-    toggle_settings,
-    toggle_timer,
+pub const Interface = struct {
+    menus: std.EnumArray(MenuType, []Element) = std.EnumArray(MenuType, []Element).initUndefined(),
+    menus_activated: std.EnumArray(MenuType, bool) = std.EnumArray(MenuType, bool).initFill(false),
+
+    pub fn toggleMenu(self: *Interface, menu: MenuType) void {
+        self.menus_activated.set(menu, !self.menus_activated.get(menu));
+    }
+
+    pub fn registerMenu(comptime self: *@This(), comptime menu: MenuType, comptime elements: []Element) void {
+        self.menus.set(menu, elements);
+    }
 };
 
-fn initTextureLookup() std.EnumArray(UiTexture, sdl2.SDL_Rect) {
-    var arr = std.EnumArray(UiTexture, sdl2.SDL_Rect).initUndefined();
-    arr.set(.restart_normal, .{ .x = 0, .y = 23, .w = 26, .h = 26 });
-    arr.set(.restart_normal_pressed, .{ .x = 26, .y = 23, .w = 26, .h = 26 });
-    arr.set(.restart_nervous, .{ .x = 0, .y = 49, .w = 26, .h = 26 });
-    arr.set(.restart_nervous_pressed, .{ .x = 26, .y = 49, .w = 26, .h = 26 });
-    arr.set(.restart_win, .{ .x = 0, .y = 75, .w = 26, .h = 26 });
-    arr.set(.restart_win_pressed, .{ .x = 26, .y = 75, .w = 26, .h = 26 });
-    arr.set(.restart_lose, .{ .x = 0, .y = 101, .w = 26, .h = 26 });
-    arr.set(.restart_lose_pressed, .{ .x = 26, .y = 101, .w = 26, .h = 26 });
-    arr.set(.settings, .{ .x = 52, .y = 23, .w = 26, .h = 26 });
-    arr.set(.settings_pressed, .{ .x = 78, .y = 23, .w = 26, .h = 26 });
-    arr.set(.settings_button, .{ .x = 52, .y = 49, .w = 16, .h = 16 });
-    arr.set(.settings_button_unchecked, .{ .x = 68, .y = 49, .w = 16, .h = 16 });
+pub fn drawInterface(interface: *Interface, buffer: *sdl2.SDL_Texture, texture_manager: *TextureManager) void {
+    _ = sdl2.SDL_SetRenderTarget(texture_manager.renderer, buffer);
+    // _ = sdl2.SDL_RenderClear(texture_manager.renderer);
 
-    return arr;
+    for (0..interface.menus.values.len) |i| {
+        if (interface.menus_activated.get(@enumFromInt(i))) {
+            for (interface.menus.get(@enumFromInt(i))) |element| {
+                switch (element) {
+                    .button => |btn| {
+                        _ = sdl2.SDL_RenderCopy(texture_manager.renderer, texture_manager.textures.get(btn.texture), null, &btn.rect);
+                    },
+                    else => @panic("unimplemented\n"),
+                }
+            }
+        }
+    }
+
+    _ = sdl2.SDL_SetRenderTarget(texture_manager.renderer, null);
 }
 
-pub const UiRenderConfig = struct {
-    visible: bool = true,
-
-    sdl_renderer: *sdl2.SDL_Renderer,
-
-    active_texture: ?*sdl2.SDL_Texture,
-
-    t_rects: std.EnumArray(UiTexture, sdl2.SDL_Rect) = initTextureLookup(),
-    buttons: [3]Button = [3]Button{
-        .{ // restart button
-            .rect = .{ .x = 0, .y = 0, .w = 52, .h = 52 },
-            .is_active = true,
-        },
-        .{ // open settings button pos
-            .rect = .{ .x = 0, .y = 52, .w = 52, .h = 52 },
-            .is_active = true,
-        },
-        .{ // toggle timer button
-            .rect = .{ .x = 26, .y = 128, .w = 32, .h = 32 },
-            .is_active = false,
-        },
-    },
-
-    settings_open: bool = false,
-
-    pub fn create(renderer: *sdl2.SDL_Renderer) @This() {
-        return @This(){
-            .sdl_renderer = renderer,
-            .active_texture = null,
+pub fn createInterface() Interface {
+    const Layouts = struct {
+        var main_overlay = [_]Element{
+            .{ .button = .{ .label = "restart", .rect = .{ .x = 0, .y = 0, .w = 52, .h = 52 }, .texture = .button_restart_normal, .on_click = &onClickRestartBtn, .on_step = &onStepRestartBtn } },
+            .{ .button = .{ .label = "options", .rect = .{ .x = 0, .y = 52, .w = 52, .h = 52 }, .texture = .button_options, .on_click = onClickOptionsBtn, .on_step = null } },
         };
-    }
+        var options = [_]Element{
+            .{ .button = .{ .label = "toggle timer", .rect = .{ .x = 26, .y = 128, .w = 32, .h = 32 }, .texture = .button_checkbox, .on_click = &onClickDoNothing, .on_step = null } },
+        };
+    };
 
-    pub fn loadDefaultTextures(self: *@This()) void {
-        const default_textures = @embedFile("res/default/ui.png");
+    var interface = Interface{};
 
-        if (self.active_texture != null) {
-            sdl2.SDL_DestroyTexture(self.active_texture.?);
-        }
-        const stream: ?*sdl2.SDL_RWops = sdl2.SDL_RWFromConstMem(default_textures, default_textures.len);
-        defer sdl2.SDL_FreeRW(stream);
+    interface.registerMenu(.main_overlay, Layouts.main_overlay[0..]);
+    interface.registerMenu(.options, Layouts.options[0..]);
 
-        const sprite_surf: *sdl2.SDL_Surface = sdl2.IMG_LoadPNG_RW(stream) orelse
-            @panic("couldn't load default ui textures. panicking.\n");
+    interface.menus_activated.set(.main_overlay, true);
 
-        defer sdl2.SDL_FreeSurface(sprite_surf);
+    return interface;
+}
 
-        const texture = sdl2.SDL_CreateTextureFromSurface(self.sdl_renderer, sprite_surf) orelse
-            @panic("unable to turn tilesheet surface into texture. panicking.\n");
+fn onClickDoNothing(_: *Element, _: *Interface, _: *State) bool {
+    return false;
+}
 
-        self.active_texture = texture;
-    }
+fn onClickRestartBtn(_: *Element, _: *Interface, s: *State) bool {
+    s.board_pending_restart = true;
+    return false;
+}
 
-    pub fn posIsOnUi(self: *UiRenderConfig, x: c_int, y: c_int) bool {
-        for (&self.buttons) |button| {
-            if (button.is_active and
-                button.rect.x <= x and
-                (button.rect.x + button.rect.w) >= x and
-                button.rect.y <= y and
-                button.rect.y + button.rect.h >= y) return true;
-        }
-        return false;
-    }
+fn onStepRestartBtn(_: *Element, _: *Interface, _: *State, _: []InputEvent) bool {
+    // Todo!
+    return false;
+}
 
-    pub fn clickButtonAtXY(self: *UiRenderConfig, x: c_int, y: c_int, state: *State) void {
-        for (&self.buttons, 0..) |button, i| {
-            if (!(button.is_active and
-                button.rect.x <= x and
-                (button.rect.x + button.rect.w) >= x and
-                button.rect.y <= y and
-                button.rect.y + button.rect.h >= y)) continue;
-
-            switch (i) {
-                0 => state.board_pending_restart = true,
-                1 => self.toggleSettingsMenu(),
-
-                else => unreachable,
-            }
-            break;
-        }
-        // temp, use ui_ready_for_redraw as soon as it's ready to be used that way
-        state.board_ready_for_redraw = true;
-    }
-
-    fn toggleSettingsMenu(self: *UiRenderConfig) void {
-        self.settings_open = !self.settings_open;
-        self.buttons[2].is_active = self.settings_open;
-    }
-};
-
-pub fn drawUiComponents(urc: *UiRenderConfig, _: *brd.Board, buffer: *sdl2.SDL_Texture) void {
-    std.debug.assert(urc.active_texture != null);
-
-    _ = sdl2.SDL_SetRenderTarget(urc.sdl_renderer, buffer);
-    const texture = urc.active_texture;
-
-    // don't clear because it needs to be rendered over the board.
-    // i am currently calling drawBoard BEFORE this function, so i shouldn't clear the texture here.
-    // this is a hacky workaround for now unitl i render the UI and board separately.
-    // _ = sdl2.SDL_RenderClear(urc.sdl_renderer);
-
-    if (urc.visible) {
-        if (urc.buttons[0].is_active) _ = sdl2.SDL_RenderCopy(urc.sdl_renderer, texture, &urc.t_rects.get(.restart_normal), &urc.buttons[0].rect);
-        if (urc.buttons[1].is_active) _ = sdl2.SDL_RenderCopy(urc.sdl_renderer, texture, &urc.t_rects.get(.settings), &urc.buttons[1].rect);
-        if (urc.buttons[2].is_active) _ = sdl2.SDL_RenderCopy(urc.sdl_renderer, texture, &urc.t_rects.get(.settings_button), &urc.buttons[2].rect);
-
-        _ = sdl2.SDL_SetRenderTarget(urc.sdl_renderer, null);
-    }
+fn onClickOptionsBtn(_: *Element, i: *Interface, _: *State) bool {
+    i.toggleMenu(.options);
+    return true;
 }

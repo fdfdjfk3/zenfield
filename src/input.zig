@@ -4,7 +4,7 @@ const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 
-const InputEvent = union(enum) {
+pub const InputEvent = union(enum) {
     quit,
     click: struct {
         button: enum {

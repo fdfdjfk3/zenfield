@@ -3,6 +3,7 @@ const brd = @import("board.zig");
 const gui = @import("render.zig");
 const input = @import("input.zig");
 const st = @import("state.zig");
+const texture = @import("texturemanager.zig");
 
 const sdl2 = @cImport({
     @cInclude("SDL2/SDL.h");
@@ -80,13 +81,17 @@ pub fn main() !void {
 
     // initialize render data thing
     var board_render_config = gui.BoardRenderConfig.create(renderer);
-    board_render_config.loadDefaultTileset();
 
-    var ui_render_config = gui.UiRenderConfig.create(renderer);
-    ui_render_config.loadDefaultTextures();
+    comptime var interface: gui.Interface = gui.createInterface();
+
+    // var ui_render_config = gui.UiRenderConfig.create(renderer);
+    //ui_render_config.loadDefaultTextures();
 
     var inputs = input.InputTracker{};
     var state = st.State{};
+
+    var texture_manager = texture.TextureManager.init(renderer);
+    texture_manager.loadDefaultTextures();
 
     _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     _ = sdl2.SDL_RenderClear(renderer);
@@ -107,10 +112,10 @@ pub fn main() !void {
                 .click => |details| {
                     switch (details.button) {
                         .left => {
-                            if (ui_render_config.posIsOnUi(details.posx, details.posy)) {
-                                ui_render_config.clickButtonAtXY(details.posx, details.posy, &state);
-                                continue;
-                            }
+                            //if (ui_render_config.posIsOnUi(details.posx, details.posy)) {
+                            //    ui_render_config.clickButtonAtXY(details.posx, details.posy, &state);
+                            //    continue;
+                            //}
 
                             const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
                             const tile = board.tileAt(tilexy[0], tilexy[1]) catch continue;
@@ -168,8 +173,8 @@ pub fn main() !void {
         if (state.board_ready_for_redraw) {
             // render the board and then ui on top of it
             state.board_ready_for_redraw = false;
-            gui.drawBoard(&board_render_config, &board, screen_buffer);
-            gui.drawUiComponents(&ui_render_config, &board, screen_buffer);
+            gui.drawBoard(&board_render_config, &board, screen_buffer, &texture_manager);
+            gui.drawInterface(&interface, screen_buffer, &texture_manager);
             _ = sdl2.SDL_RenderCopy(renderer, screen_buffer, null, &screen_rect);
             _ = sdl2.SDL_RenderPresent(renderer);
         }

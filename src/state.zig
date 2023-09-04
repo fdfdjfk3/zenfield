@@ -5,4 +5,9 @@ pub const State = struct {
     board_pending_restart: bool = false,
 
     ui_ready_for_redraw: bool = true,
+
+    texture_manager_pending_update: bool = false,
+    texture_manager_activated_texture: enum {
+        default,
+    } = .default,
 };
