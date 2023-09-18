@@ -1,5 +1,24 @@
 const std = @import("std");
 
+pub const BoardSizeOption = union(enum) {
+    beginner,
+    intermediate,
+    expert,
+    custom: struct {
+        width: u32,
+        height: u32,
+        mines: u32,
+    },
+    pub fn details(self: BoardSizeOption) struct { u32, u32, u32 } {
+        switch (self) {
+            .beginner => return .{ 9, 9, 10 },
+            .intermediate => return .{ 16, 16, 40 },
+            .expert => return .{ 30, 16, 99 },
+            .custom => |c| return .{ c.width, c.height, c.mines },
+        }
+    }
+};
+
 const max_size = 256;
 
 const Tile = union(enum) {
@@ -51,12 +70,12 @@ pub const Board = struct {
     }
 
     /// creates an initial board object
-    pub fn create(allocator: std.mem.Allocator, width: u32, height: u32, mines: u32) Board {
+    pub fn create(allocator: std.mem.Allocator) Board {
         var board = Board{
-            .grid_width = @min(width, max_size),
-            .grid_height = @min(height, max_size),
+            .grid_width = 0,
+            .grid_height = 0,
             .grid = [1][max_size]Tile{[1]Tile{.{ .uncleared = .{ .is_flagged = false, .mines_adjacent = 0 } }} ** max_size} ** max_size,
-            .mines = @min(width * height, mines),
+            .mines = 0,
             .state = .in_progress,
             .allocator = allocator,
             .open_tile_list = std.ArrayList(std.meta.Tuple(&[_]type{ u32, u32 })).initCapacity(allocator, 32) catch @panic("unable to initialize board open_tile_list\n"),
@@ -138,7 +157,7 @@ pub const Board = struct {
                 for (row[left .. right + 1], 0..) |_, x| {
                     if (x + left == orig_x and y + top == orig_y) continue;
 
-                    const updated = try self.openTile(@as(u32, @intCast(x + left)), @as(u32, @intCast(y + top)));
+                    const updated = try self.openTile(@intCast(x + left), @intCast(y + top));
                     something_updated = something_updated or updated;
                 }
             }
@@ -206,5 +225,18 @@ pub const Board = struct {
             return true;
         }
         return false;
+    }
+
+    pub fn clearAndResize(self: *Board, option: BoardSizeOption) !void {
+        const details = option.details();
+        const width = details[0];
+        const height = details[1];
+        const mines = details[2];
+
+        self.grid_width = width;
+        self.grid_height = height;
+        self.mines = mines;
+        self.clear();
+        try self.setMines();
     }
 };

@@ -29,11 +29,23 @@ pub const TextureID = enum {
     button_options_pressed,
     button_checkbox,
     button_checkbox_checked,
+    button_difficulty_beginner,
+    button_difficulty_intermediate,
+    button_difficulty_expert,
 };
 
 pub const TextureManager = struct {
     renderer: *sdl2.SDL_Renderer,
     textures: std.EnumArray(TextureID, *sdl2.SDL_Texture),
+
+    fn deleteAllTextures(self: *TextureManager) void {
+        for (self.textures.values, 0..) |t, i| {
+            if (t != null and t != missing_texture) {
+                sdl2.SDL_Destroy_Texture(t);
+                self.textures.set(@enumFromInt(i), missing_texture);
+            }
+        }
+    }
 
     fn loadTextureRaw(self: *TextureManager, mem: []const u8) error{LoadError}!*sdl2.SDL_Texture {
         const stream = sdl2.SDL_RWFromConstMem(@ptrCast(mem), @intCast(mem.len)) orelse return error.LoadError;
@@ -51,13 +63,14 @@ pub const TextureManager = struct {
             .textures = std.EnumArray(TextureID, *sdl2.SDL_Texture).initUndefined(),
         };
         missing_texture = texture_manager.loadTextureRaw(missing_texture_data[0..]) catch @panic("Unable to load fallback texture.\n");
+        texture_manager.loadDefaultTextures();
 
         return texture_manager;
     }
 
     pub fn loadDefaultTextures(self: *TextureManager) void {
         inline for (@typeInfo(TextureID).Enum.fields) |field| {
-            self.textures.set(@enumFromInt(field.value), self.loadTextureRaw(@embedFile("res/default/" ++ field.name ++ ".png")[0..]) catch missing_texture.?);
+            self.textures.set(@enumFromInt(field.value), self.loadTextureRaw(@embedFile("res/default/" ++ field.name ++ ".png")[0..]) catch unreachable);
         }
     }
 };

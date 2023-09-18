@@ -10,6 +10,10 @@ const sdl2 = @cImport({
     @cInclude("SDL2/SDL_image.h");
 });
 
+pub fn rect(x: c_int, y: c_int, w: c_int, h: c_int) sdl2.SDL_Rect {
+    return .{ .x = x, .y = y, .w = w, .h = h };
+}
+
 pub const default_tilesize = 16;
 pub const BoardRenderConfig = struct {
     sdl_renderer: *sdl2.SDL_Renderer,
@@ -28,7 +32,7 @@ pub const BoardRenderConfig = struct {
 
 /// get the X, Y position of the board based on the X, Y position on the screen. takes in BoardRenderConfig to accurately make this calculation.
 /// returns an error if the X, Y is not on the board.
-pub fn getBoardTileXYOfScreenXY(brc: *BoardRenderConfig, board: *brd.Board, x: i32, y: i32) !struct { u32, u32 } {
+pub fn getBoardTileXYOfScreenXY(brc: *BoardRenderConfig, board: *brd.Board, x: i32, y: i32) !std.meta.Tuple(&[_]type{ u32, u32 }) {
     const window = sdl2.SDL_RenderGetWindow(brc.sdl_renderer);
     var w: i32 = undefined;
     var h: i32 = undefined;
@@ -93,6 +97,7 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
         break :block .{ start, end };
     };
 
+    var hesitating_tile: ?std.meta.Tuple(&[_]type{ u32, u32 }) = null;
     // render loop
     for (board.grid[hbound[0]..hbound[1]], 0..) |row, slice_y| {
         for (row[wbound[0]..wbound[1]], 0..) |tile, slice_x| {
@@ -107,6 +112,9 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
                 .uncleared => |info| {
                     var texture = texture_manager.textures.get(.tile_uncleared);
                     if (info.is_flagged) texture = texture_manager.textures.get(.tile_flagged);
+                    if (hesitating_tile != null and x == hesitating_tile.?[0] and y == hesitating_tile.?[1] and !info.is_flagged) {
+                        texture = texture_manager.textures.get(.tile_0);
+                    }
 
                     _ = sdl2.SDL_RenderCopy(brc.sdl_renderer, texture, null, &render_rect);
                 },
@@ -147,6 +155,16 @@ pub fn drawBoard(brc: *BoardRenderConfig, board: *brd.Board, buffer: *sdl2.SDL_T
 pub const MenuType = enum {
     main_overlay,
     options,
+    board_options,
+    a,
+};
+
+pub const Message = union(enum) {
+    clicked_on,
+    input: struct {
+        event: InputEvent,
+        touching: bool,
+    },
 };
 
 pub const Element = union(enum) {
@@ -155,24 +173,62 @@ pub const Element = union(enum) {
         texture: TextureID,
     },
     button: struct {
+        id: u32,
         label: []const u8,
         rect: sdl2.SDL_Rect,
         texture: TextureID,
-        on_click: *const fn (*Element, *Interface, *State) bool,
-        on_step: ?*const fn (*Element, *Interface, *State, []InputEvent) bool,
+        message: *const fn (Message, *Element, *Interface, *State) bool,
     },
+    pub fn newButton(
+        id: u32,
+        label: []const u8,
+        r: sdl2.SDL_Rect,
+        texture: TextureID,
+        message: *const fn (Message, *Element, *Interface, *State) bool,
+    ) Element {
+        return Element{ .button = .{ .id = id, .label = label, .rect = r, .texture = texture, .message = message } };
+    }
 };
 
 pub const Interface = struct {
     menus: std.EnumArray(MenuType, []Element) = std.EnumArray(MenuType, []Element).initUndefined(),
     menus_activated: std.EnumArray(MenuType, bool) = std.EnumArray(MenuType, bool).initFill(false),
 
-    pub fn toggleMenu(self: *Interface, menu: MenuType) void {
-        self.menus_activated.set(menu, !self.menus_activated.get(menu));
+    pub fn toggleMenu(self: *@This(), menu: MenuType) void {
+        const status = self.menus_activated.get(menu);
+        self.menus_activated.set(menu, !status);
     }
 
-    pub fn registerMenu(comptime self: *@This(), comptime menu: MenuType, comptime elements: []Element) void {
+    pub fn registerMenu(self: *@This(), menu: MenuType, elements: []Element) void {
         self.menus.set(menu, elements);
+    }
+
+    pub fn tryToClick(self: *@This(), pos: struct { c_int, c_int }, state: *State) bool {
+        for (0..self.menus.values.len) |i| {
+            // if this menu is not activated, keep trying other ones
+            if (!self.menus_activated.get(@enumFromInt(i))) continue;
+
+            var elements = self.menus.getPtr(@enumFromInt(i));
+            for (elements.*) |*element| {
+                switch (element.*) {
+                    .button => |info| {
+                        if (!(pos[0] > info.rect.x and
+                            pos[0] < info.rect.x + info.rect.w and
+                            pos[1] > info.rect.y and
+                            pos[1] < info.rect.y + info.rect.h)) continue;
+
+                        const something_updated = info.message(.clicked_on, element, self, state);
+
+                        if (something_updated) {
+                            state.board_ready_for_redraw = true;
+                        }
+                        return true;
+                    },
+                    .decoration => return true,
+                }
+            }
+        }
+        return false;
     }
 };
 
@@ -199,11 +255,17 @@ pub fn drawInterface(interface: *Interface, buffer: *sdl2.SDL_Texture, texture_m
 pub fn createInterface() Interface {
     const Layouts = struct {
         var main_overlay = [_]Element{
-            .{ .button = .{ .label = "restart", .rect = .{ .x = 0, .y = 0, .w = 52, .h = 52 }, .texture = .button_restart_normal, .on_click = &onClickRestartBtn, .on_step = &onStepRestartBtn } },
-            .{ .button = .{ .label = "options", .rect = .{ .x = 0, .y = 52, .w = 52, .h = 52 }, .texture = .button_options, .on_click = onClickOptionsBtn, .on_step = null } },
+            Element.newButton(0, "restart", rect(0, 0, 52, 52), .button_restart_normal, &restartBtn),
+            Element.newButton(1, "options", rect(0, 52, 52, 52), .button_options, &optionsBtn),
         };
         var options = [_]Element{
-            .{ .button = .{ .label = "toggle timer", .rect = .{ .x = 26, .y = 128, .w = 32, .h = 32 }, .texture = .button_checkbox, .on_click = &onClickDoNothing, .on_step = null } },
+            Element.newButton(2, "open board options", rect(26, 128, 32, 32), .button_options, &boardOptionsBtn),
+            // Element.newButton(3, "toggle timer", rect(26, 160, 32, 32), .button_checkbox, &noMessage),
+        };
+        var board_options = [_]Element{
+            Element.newButton(4, "beginner difficulty", rect(75, 128, 64, 64), .button_difficulty_beginner, &changeDiff),
+            Element.newButton(5, "intermediate difficulty", rect(75, 200, 64, 64), .button_difficulty_intermediate, &changeDiff),
+            Element.newButton(6, "expert difficulty", rect(75, 272, 64, 64), .button_difficulty_expert, &changeDiff),
         };
     };
 
@@ -211,27 +273,60 @@ pub fn createInterface() Interface {
 
     interface.registerMenu(.main_overlay, Layouts.main_overlay[0..]);
     interface.registerMenu(.options, Layouts.options[0..]);
+    interface.registerMenu(.board_options, Layouts.board_options[0..]);
 
     interface.menus_activated.set(.main_overlay, true);
 
     return interface;
 }
 
-fn onClickDoNothing(_: *Element, _: *Interface, _: *State) bool {
+fn noMessage(_: Message, _: *Element, _: *Interface, _: *State) bool {
     return false;
 }
 
-fn onClickRestartBtn(_: *Element, _: *Interface, s: *State) bool {
-    s.board_pending_restart = true;
-    return false;
+fn restartBtn(m: Message, _: *Element, _: *Interface, s: *State) bool {
+    switch (m) {
+        .clicked_on => {
+            s.board_pending_restart = true;
+            return true;
+        },
+        else => return false,
+    }
 }
 
-fn onStepRestartBtn(_: *Element, _: *Interface, _: *State, _: []InputEvent) bool {
-    // Todo!
-    return false;
+fn boardOptionsBtn(m: Message, _: *Element, i: *Interface, _: *State) bool {
+    switch (m) {
+        .clicked_on => {
+            i.toggleMenu(.board_options);
+            return true;
+        },
+        else => return false,
+    }
 }
 
-fn onClickOptionsBtn(_: *Element, i: *Interface, _: *State) bool {
-    i.toggleMenu(.options);
-    return true;
+fn optionsBtn(m: Message, _: *Element, i: *Interface, _: *State) bool {
+    switch (m) {
+        .clicked_on => {
+            i.toggleMenu(.options);
+            i.menus_activated.set(.board_options, false);
+            return true;
+        },
+        else => return false,
+    }
+}
+
+fn changeDiff(m: Message, e: *Element, _: *Interface, s: *State) bool {
+    switch (m) {
+        .clicked_on => {
+            s.board_size_option = switch (e.*.button.id) {
+                4 => .beginner,
+                5 => .intermediate,
+                6 => .expert,
+                else => unreachable,
+            };
+            s.board_size_pending_update = true;
+            return false;
+        },
+        else => return false,
+    }
 }

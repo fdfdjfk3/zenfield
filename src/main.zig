@@ -77,12 +77,10 @@ pub fn main() !void {
     sdl2.SDL_SetWindowIcon(window, icon);
     sdl2.SDL_SetWindowMinimumSize(window, 150, 100);
 
-    var board: brd.Board = brd.Board.create(allocator, 40, 20, 140);
-
     // initialize render data thing
     var board_render_config = gui.BoardRenderConfig.create(renderer);
 
-    comptime var interface: gui.Interface = gui.createInterface();
+    var interface: gui.Interface = gui.createInterface();
 
     // var ui_render_config = gui.UiRenderConfig.create(renderer);
     //ui_render_config.loadDefaultTextures();
@@ -90,8 +88,10 @@ pub fn main() !void {
     var inputs = input.InputTracker{};
     var state = st.State{};
 
+    var board: brd.Board = brd.Board.create(allocator);
+    try board.clearAndResize(state.board_size_option);
+
     var texture_manager = texture.TextureManager.init(renderer);
-    texture_manager.loadDefaultTextures();
 
     _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     _ = sdl2.SDL_RenderClear(renderer);
@@ -112,10 +112,9 @@ pub fn main() !void {
                 .click => |details| {
                     switch (details.button) {
                         .left => {
-                            //if (ui_render_config.posIsOnUi(details.posx, details.posy)) {
-                            //    ui_render_config.clickButtonAtXY(details.posx, details.posy, &state);
-                            //    continue;
-                            //}
+                            if (interface.tryToClick(.{ details.posx, details.posy }, &state)) {
+                                continue;
+                            }
 
                             const tilexy = gui.getBoardTileXYOfScreenXY(&board_render_config, &board, details.posx, details.posy) catch continue;
                             const tile = board.tileAt(tilexy[0], tilexy[1]) catch continue;
@@ -168,6 +167,12 @@ pub fn main() !void {
 
             state.board_ready_for_redraw = true;
             state.board_pending_restart = false;
+        }
+
+        if (state.board_size_pending_update) {
+            state.board_size_pending_update = false;
+            try board.clearAndResize(state.board_size_option);
+            state.board_ready_for_redraw = true;
         }
 
         if (state.board_ready_for_redraw) {

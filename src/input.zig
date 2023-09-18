@@ -59,7 +59,7 @@ pub const InputTracker = struct {
                 sdl2.SDL_QUIT => {
                     try self.event_queue.append(.quit);
 
-                    // no need to continue. it's going to be over soon anyways.
+                    // no need to continue.
                     break;
                 },
                 // I hate everything about this upcoming code. but i'm too lazy to change it because it already works well enough(TM) :3

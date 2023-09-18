@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
+    run_cmd.setEnvironmentVariable("SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", "0");
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
